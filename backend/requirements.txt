@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+soundfile
+librosa
+transformers>=4.36
+tqdm
+pandas
+numpy
+faster-whisper
