@@ -1,6 +1,7 @@
 import { useState } from "react";
 import FileUploader from "./components/FileUploader";
 import ResultDisplay from "./components/ResultDisplay";
+import GlobalXAI from "./pages/GlobalXAI";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -9,6 +10,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [err, setErr] = useState("");
+  const [showGlobalXAI, setShowGlobalXAI] = useState(false);
 
   const handleFileSelect = (selectedFile) => {
     setFile(selectedFile);
@@ -55,6 +57,11 @@ export default function App() {
     setErr("");
   };
 
+  // If showing Global XAI, render that instead
+  if (showGlobalXAI) {
+    return <GlobalXAI onClose={() => setShowGlobalXAI(false)} />;
+  }
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -70,13 +77,38 @@ export default function App() {
             fontSize: '48px',
             fontWeight: '800',
             letterSpacing: '-1px',
-            marginBottom: '12px'
+            marginBottom: '32px'
           }}>
             Hindi Audio Deepfake Detector
           </h1>
-          <p style={{ color: '#666', fontSize: '16px' }}>
-            AI-powered audio authenticity analysis
-          </p>
+          
+          {/* Global XAI Button */}
+          <button
+            onClick={() => setShowGlobalXAI(true)}
+            style={{
+              padding: '14px 32px',
+              background: 'linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%)',
+              color: '#fff',
+              border: '1px solid #2a2a2a',
+              borderRadius: '12px',
+              fontSize: '14px',
+              fontWeight: '700',
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+              letterSpacing: '0.5px'
+            }}
+            onMouseOver={(e) => {
+              e.target.style.transform = 'translateY(-2px)';
+              e.target.style.boxShadow = '0 12px 40px rgba(0, 0, 0, 0.8)';
+            }}
+            onMouseOut={(e) => {
+              e.target.style.transform = 'translateY(0)';
+              e.target.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.6)';
+            }}
+          >
+            View Global XAI Analysis
+          </button>
         </div>
 
         {/* Main Content */}

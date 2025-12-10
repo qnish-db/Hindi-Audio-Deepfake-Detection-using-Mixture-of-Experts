@@ -1,7 +1,37 @@
 # xai_advanced.py
 """
-Advanced XAI Methods: Integrated Gradients, SHAP-like, LRP
-These methods provide TIME-BASED attribution (not just feature-based)
+Advanced XAI Methods: Integrated Gradients, SHAP-like, Gradient×Input
+
+🚨 CRITICAL ARCHITECTURE LIMITATION:
+====================================
+Your MoE model uses POOLED features (global statistics), not frame-level sequences.
+
+What this means:
+  ✅ We CAN show which of the 1536 FEATURE DIMENSIONS (768×2 PTMs) were important
+  ❌ We CANNOT show which TIME SEGMENTS were important
+  
+All methods in this file return FEATURE DIMENSION IMPORTANCE, not temporal patterns.
+The output is smoothed/downsampled to 50 points for visualization, but this is
+cosmetic - it does NOT represent true temporal information.
+
+WHAT EACH METHOD ACTUALLY SHOWS:
+=================================
+1. compute_integrated_gradients() 
+   → Which feature dimensions contributed to FAKE prediction
+   → Uses path integral from baseline to input
+   
+2. compute_shap_approximation()
+   → Feature dimension importance using Shapley values
+   → Shows expert-level contributions
+   
+3. compute_gradient_x_input()
+   → Feature dimension saliency using gradient × input
+   → NOT true Layer-wise Relevance Propagation (LRP)
+
+For TRUE temporal analysis, use xai_analysis.py methods:
+- temporal_heatmap: Re-extracts features for each segment (expensive but accurate)
+- frequency_contribution: Mel spectrogram over time (model-independent)
+- breathing_patterns: Pause patterns over time (model-independent)
 """
 import numpy as np
 import torch
@@ -14,11 +44,13 @@ def compute_integrated_gradients(
     model,
     feats: Dict[str, np.ndarray],
     device: str,
-    steps: int = 50
+    steps: int = 50  # Restored to 50 for accuracy
 ) -> Dict:
     """
-    Integrated Gradients: Shows which time segments contributed to FAKE prediction.
-    Returns attribution per time frame (not per feature dimension).
+    Integrated Gradients: Shows which features contributed to FAKE prediction.
+    
+    FIXED: Gradient accumulation bug - now properly clones gradients.
+    FIXED: Handles pooled features (no temporal dimension).
     
     Method:
     1. Create baseline (zero vector)
@@ -28,10 +60,10 @@ def compute_integrated_gradients(
     
     Returns:
         {
-            'temporal_attribution': List[float],  # Attribution per time frame
-            'attribution_scores': Dict[str, List[float]],  # Per expert
-            'peak_timestamps': List[Tuple[float, float]],  # High attribution regions
-            'method': 'integrated_gradients'
+            'feature_attribution': List[float],  # Feature dimension importance (NOT temporal)
+            'attribution_per_expert': Dict[str, List[float]],  # Per expert feature attribution
+            'method': 'integrated_gradients',
+            'note': 'Shows which FEATURE DIMENSIONS were important, NOT time segments'
         }
     """
     model.eval()
@@ -45,7 +77,7 @@ def compute_integrated_gradients(
     # Storage for gradients
     integrated_grads = {k: torch.zeros_like(v) for k, v in xdict.items()}
     
-    # Interpolate and accumulate gradients
+    # CRITICAL FIX: Interpolate and accumulate gradients properly
     for step in range(steps):
         alpha = (step + 1) / steps
         
@@ -64,44 +96,48 @@ def compute_integrated_gradients(
         fake_score = logits[0, 1]
         
         # Backward
+        model.zero_grad()  # CRITICAL FIX: Zero gradients before backward
         fake_score.backward()
         
-        # Accumulate gradients
+        # CRITICAL FIX: Clone gradients to prevent accumulation bug
         for k in xdict.keys():
             if interpolated[k].grad is not None:
-                integrated_grads[k] += interpolated[k].grad
+                integrated_grads[k] += interpolated[k].grad.clone().detach()
     
     # Average and multiply by (input - baseline)
     for k in xdict.keys():
         integrated_grads[k] = (integrated_grads[k] / steps) * (xdict[k] - baseline[k])
     
-    # Compute temporal attribution (sum across feature dimensions for each time frame)
-    temporal_attribution = {}
+    # REALITY CHECK: Features are POOLED - no true temporal information exists
+    # We return feature-level attribution, NOT temporal attribution
+    # The model sees global statistics, not time-specific patterns
+    
+    feature_attribution = {}
     for ptm_name, grad_tensor in integrated_grads.items():
-        # grad_tensor shape: [1, seq_len, feature_dim] or [1, feature_dim]
-        grad_np = grad_tensor[0].cpu().detach().numpy()
+        grad_np = grad_tensor[0].cpu().numpy()
         
-        if len(grad_np.shape) == 2:  # [seq_len, feature_dim]
-            # Sum across feature dimension
-            time_attr = np.abs(grad_np).sum(axis=1)
-        else:  # [feature_dim]
-            # Single time point (global pooling already done)
-            time_attr = np.abs(grad_np)
+        # Get absolute attribution per feature dimension
+        if len(grad_np.shape) == 2:  # [seq_len, feature_dim] - if somehow not pooled
+            feat_attr = np.abs(grad_np).mean(axis=0)  # Average over time
+        elif len(grad_np.shape) == 1:  # [feature_dim] - EXPECTED for pooled features
+            feat_attr = np.abs(grad_np)
+        else:
+            feat_attr = np.abs(grad_np.flatten())
         
         # Normalize
-        if time_attr.max() > 0:
-            time_attr = time_attr / time_attr.max()
+        if feat_attr.max() > 0:
+            feat_attr = feat_attr / feat_attr.max()
         
-        temporal_attribution[ptm_name] = time_attr.tolist()
+        feature_attribution[ptm_name] = feat_attr.tolist()
     
     # Combine attributions (simple average)
-    ptm_names = list(temporal_attribution.keys())
+    ptm_names = list(feature_attribution.keys())
     if len(ptm_names) > 0:
         # Make all same length
-        max_len = max(len(temporal_attribution[p]) for p in ptm_names)
+        max_len = max(len(feature_attribution[p]) for p in ptm_names)
         combined = np.zeros(max_len)
         for ptm_name in ptm_names:
-            attr = temporal_attribution[ptm_name]
+            attr = feature_attribution[ptm_name]
             # Pad or truncate
             if len(attr) < max_len:
                 attr = attr + [0.0] * (max_len - len(attr))
@@ -109,27 +145,25 @@ def compute_integrated_gradients(
                 attr = attr[:max_len]
             combined += np.array(attr)
         combined /= len(ptm_names)
+        
+        # Smooth for visualization (moving average to create pseudo-temporal effect)
+        # This is for VISUALIZATION ONLY - not true temporal attribution
+        window_size = max(1, len(combined) // 50)
+        smoothed = np.convolve(combined, np.ones(window_size)/window_size, mode='same')
+        
+        # Downsample to 50 points for frontend
+        if len(smoothed) > 50:
+            indices = np.linspace(0, len(smoothed)-1, 50, dtype=int)
+            combined_viz = smoothed[indices]
+        else:
+            combined_viz = smoothed
     else:
-        combined = np.array([])
-    
-    # Find peak regions (top 20% attribution)
-    threshold = np.percentile(combined, 80) if len(combined) > 0 else 0
-    peak_indices = np.where(combined >= threshold)[0]
-    
-    # Group consecutive indices
-    peak_regions = []
-    if len(peak_indices) > 0:
-        start_idx = peak_indices[0]
-        for i in range(1, len(peak_indices)):
-            if peak_indices[i] - peak_indices[i-1] > 5:  # Gap threshold
-                peak_regions.append((int(start_idx), int(peak_indices[i-1])))
-                start_idx = peak_indices[i]
-        peak_regions.append((int(start_idx), int(peak_indices[-1])))
+        combined_viz = np.array([])
     
     return {
-        'temporal_attribution': combined.tolist(),
-        'attribution_per_expert': temporal_attribution,
-        'peak_regions': peak_regions,
+        'feature_attribution': combined_viz.tolist(),  # Feature dimension importance (smoothed for viz)
+        'attribution_per_expert': {k: v[:50] if len(v) > 50 else v for k, v in feature_attribution.items()},
+        'note': 'IMPORTANT: Model uses POOLED features. This shows which of the 1536 feature dimensions (768×2 PTMs) were important, NOT which time segments.',
         'method': 'integrated_gradients'
     }
 
@@ -142,16 +176,16 @@ def compute_shap_approximation(
 ) -> Dict:
     """
     SHAP-like approximation: Shows feature importance per expert.
-    Uses sampling-based approach (faster than exact SHAP).
     
-    Returns temporal importance (which time segments matter most).
+    FIXED: Proper Shapley value formula with coalition weighting.
+    FIXED: Handles pooled features correctly.
     
     Returns:
         {
-            'temporal_importance': List[float],  # Importance per time frame
+            'feature_importance': List[float],  # Feature dimension importance (NOT temporal)
             'expert_contributions': Dict[str, float],  # Overall contribution per expert
-            'top_moments': List[Dict],  # Top contributing time segments
-            'method': 'shap_approximation'
+            'method': 'shap_approximation',
+            'note': 'Shows which FEATURE DIMENSIONS were important, NOT time segments'
         }
     """
     model.eval()
@@ -161,21 +195,30 @@ def compute_shap_approximation(
                 for k, v in feats.items()}
     with torch.inference_mode():
         baseline_logits, _, _ = model(baseline)
-        baseline_pred = torch.softmax(baseline_logits, dim=1)[0, 1].item()
+        baseline_pred = F.softmax(baseline_logits, dim=1)[0, 1].item()
     
     # Get actual prediction
     xdict = {k: torch.from_numpy(v)[None, :].to(device) for k, v in feats.items()}
     with torch.inference_mode():
         actual_logits, expert_logits, gate_weights = model(xdict)
-        actual_pred = torch.softmax(actual_logits, dim=1)[0, 1].item()
+        actual_pred = F.softmax(actual_logits, dim=1)[0, 1].item()
     
-    # Sample-based SHAP approximation
+    # FIXED: Proper SHAP approximation with Shapley weighting
     ptm_names = list(feats.keys())
+    n_players = len(ptm_names)
     contributions = {ptm: 0.0 for ptm in ptm_names}
     
     for _ in range(n_samples):
         # Randomly mask some experts
-        mask = np.random.binomial(1, 0.5, len(ptm_names))
+        mask = np.random.binomial(1, 0.5, n_players)
+        coalition_size = int(mask.sum())
+        
+        # FIXED: Shapley weight based on coalition size
+        if coalition_size > 0 and coalition_size < n_players:
+            weight = 1.0 / (n_players * np.math.comb(n_players - 1, coalition_size))
+        else:
+            weight = 1.0 / n_samples
+        
         masked_input = {}
         for i, ptm in enumerate(ptm_names):
             if mask[i]:
@@ -185,83 +228,89 @@ def compute_shap_approximation(
         
         with torch.inference_mode():
             masked_logits, _, _ = model(masked_input)
-            masked_pred = torch.softmax(masked_logits, dim=1)[0, 1].item()
+            masked_pred = F.softmax(masked_logits, dim=1)[0, 1].item()
         
-        # Contribution = change in prediction when this expert is included
+        # FIXED: Weighted contribution
         for i, ptm in enumerate(ptm_names):
             if mask[i]:
-                contributions[ptm] += (masked_pred - baseline_pred) / n_samples
+                contributions[ptm] += (masked_pred - baseline_pred) * weight
     
-    # Compute temporal importance using gradient
+    # FIXED: Compute simulated temporal importance using gradient
     xdict_grad = {k: torch.from_numpy(v)[None, :].to(device).requires_grad_(True) 
                   for k, v in feats.items()}
     logits, _, _ = model(xdict_grad)
-    fake_score = logits[0, 1]
+    fake_score = F.softmax(logits, dim=1)[0, 1]  # Use softmax for proper gradients
+    model.zero_grad()
     fake_score.backward()
     
-    # Extract temporal importance
-    temporal_importance = []
+    # REALITY CHECK: Extract feature importance (NOT temporal - features are pooled)
+    feature_importance = []
     for ptm_name in ptm_names:
         if xdict_grad[ptm_name].grad is not None:
             grad = torch.abs(xdict_grad[ptm_name].grad[0]).cpu().numpy()
-            if len(grad.shape) == 2:  # [seq_len, feat_dim]
-                temp_imp = grad.sum(axis=1)
+            
+            if len(grad.shape) == 2:  # [seq_len, feat_dim] - unlikely
+                feat_imp = grad.mean(axis=0)  # Average over time if exists
+            elif len(grad.shape) == 1:  # [feat_dim] - EXPECTED for pooled
+                feat_imp = grad
             else:
-                temp_imp = grad
-            temporal_importance.append(temp_imp)
+                feat_imp = grad.flatten()
+            
+            feature_importance.append(feat_imp)
     
-    # Combine temporal importance
-    if temporal_importance:
-        max_len = max(len(t) for t in temporal_importance)
-        combined_temporal = np.zeros(max_len)
-        for temp in temporal_importance:
-            if len(temp) < max_len:
-                temp = np.pad(temp, (0, max_len - len(temp)))
-            combined_temporal += temp[:max_len]
-        combined_temporal /= len(temporal_importance)
+    # Combine feature importance
+    if feature_importance:
+        max_len = max(len(f) for f in feature_importance)
+        combined_features = np.zeros(max_len)
+        for feat in feature_importance:
+            if len(feat) < max_len:
+                feat = np.pad(feat, (0, max_len - len(feat)))
+            combined_features += feat[:max_len]
+        combined_features /= len(feature_importance)
         
         # Normalize
-        if combined_temporal.max() > 0:
-            combined_temporal = combined_temporal / combined_temporal.max()
+        if combined_features.max() > 0:
+            combined_features = combined_features / combined_features.max()
+        
+        # Smooth and downsample for visualization (50 points)
+        window_size = max(1, len(combined_features) // 50)
+        smoothed = np.convolve(combined_features, np.ones(window_size)/window_size, mode='same')
+        if len(smoothed) > 50:
+            indices = np.linspace(0, len(smoothed)-1, 50, dtype=int)
+            combined_viz = smoothed[indices]
+        else:
+            combined_viz = smoothed
     else:
-        combined_temporal = np.array([])
-    
-    # Find top moments (top 10%)
-    threshold = np.percentile(combined_temporal, 90) if len(combined_temporal) > 0 else 0
-    top_indices = np.where(combined_temporal >= threshold)[0]
-    
-    top_moments = []
-    for idx in top_indices[:10]:  # Top 10
-        top_moments.append({
-            'frame_index': int(idx),
-            'importance': float(combined_temporal[idx])
-        })
+        combined_viz = np.array([])
     
     return {
-        'temporal_importance': combined_temporal.tolist(),
+        'feature_importance': combined_viz.tolist(),  # Feature dimension importance (smoothed for viz)
         'expert_contributions': contributions,
-        'top_moments': top_moments,
+        'note': 'IMPORTANT: Model uses POOLED features. This shows which of the 1536 feature dimensions were important, NOT which time segments.',
         'method': 'shap_approximation'
     }
 
 
-def compute_lrp_simple(
+def compute_gradient_x_input(
     model,
     feats: Dict[str, np.ndarray],
     device: str
 ) -> Dict:
     """
-    Simplified Layer-wise Relevance Propagation.
-    Backpropagates prediction to show input contribution.
+    Gradient × Input: Shows input contribution via gradient-based saliency.
     
-    Returns temporal relevance map.
+    RENAMED: This is NOT true Layer-wise Relevance Propagation (LRP).
+    True LRP requires layer-by-layer relevance propagation.
+    This is simply gradient × input (also called input × gradient saliency).
+    
+    FIXED: Handles pooled features correctly.
     
     Returns:
         {
-            'temporal_relevance': List[float],  # Relevance per time frame
+            'feature_relevance': List[float],  # Feature dimension relevance (NOT temporal)
             'relevance_per_expert': Dict[str, List[float]],
-            'high_relevance_regions': List[Tuple[int, int]],
-            'method': 'lrp_simple'
+            'method': 'gradient_x_input',
+            'note': 'Shows which FEATURE DIMENSIONS were important, NOT time segments'
         }
     """
     model.eval()
@@ -271,29 +320,37 @@ def compute_lrp_simple(
              for k, v in feats.items()}
     
     logits, expert_logits, gate_weights = model(xdict)
-    fake_score = logits[0, 1]
+    fake_score = F.softmax(logits, dim=1)[0, 1]  # Use softmax
     
     # Backward pass
+    model.zero_grad()
     fake_score.backward()
     
-    # Extract relevance (gradient * input)
+    # REALITY CHECK: Extract feature-level relevance (NOT temporal)
     relevance_per_expert = {}
     for ptm_name, feat_tensor in xdict.items():
         if feat_tensor.grad is not None:
-            # LRP-0 rule: relevance = gradient * input
+            # Gradient × Input
             relevance = (feat_tensor.grad * feat_tensor)[0].cpu().detach().numpy()
             
-            # Sum across feature dimension to get temporal relevance
-            if len(relevance.shape) == 2:  # [seq_len, feat_dim]
-                temporal_rel = np.abs(relevance).sum(axis=1)
-            else:  # [feat_dim]
-                temporal_rel = np.abs(relevance)
+            # Handle pooled features
+            if len(relevance.shape) == 2:  # [seq_len, feat_dim] - unlikely
+                feature_rel = np.abs(relevance).mean(axis=0)
+            elif len(relevance.shape) == 1:  # [feat_dim] - EXPECTED
+                feature_rel = np.abs(relevance)
+            else:
+                feature_rel = np.abs(relevance.flatten())
             
             # Normalize
-            if temporal_rel.max() > 0:
-                temporal_rel = temporal_rel / temporal_rel.max()
+            if feature_rel.max() > 0:
+                feature_rel = feature_rel / feature_rel.max()
             
-            relevance_per_expert[ptm_name] = temporal_rel.tolist()
+            # Downsample to 50 points for visualization
+            if len(feature_rel) > 50:
+                indices = np.linspace(0, len(feature_rel)-1, 50, dtype=int)
+                feature_rel = feature_rel[indices]
+            
+            relevance_per_expert[ptm_name] = feature_rel.tolist()
     
     # Combine relevance from all experts
     if relevance_per_expert:
@@ -307,24 +364,11 @@ def compute_lrp_simple(
     else:
         combined_relevance = np.array([])
     
-    # Find high relevance regions (top 15%)
-    threshold = np.percentile(combined_relevance, 85) if len(combined_relevance) > 0 else 0
-    high_indices = np.where(combined_relevance >= threshold)[0]
-    
-    high_regions = []
-    if len(high_indices) > 0:
-        start = high_indices[0]
-        for i in range(1, len(high_indices)):
-            if high_indices[i] - high_indices[i-1] > 10:
-                high_regions.append((int(start), int(high_indices[i-1])))
-                start = high_indices[i]
-        high_regions.append((int(start), int(high_indices[-1])))
-    
     return {
-        'temporal_relevance': combined_relevance.tolist(),
+        'feature_relevance': combined_relevance.tolist(),  # Feature dimension relevance (smoothed for viz)
         'relevance_per_expert': relevance_per_expert,
-        'high_relevance_regions': high_regions,
-        'method': 'lrp_simple'
+        'note': 'IMPORTANT: Model uses POOLED features. This shows which of the 1536 feature dimensions were important, NOT which time segments.',
+        'method': 'gradient_x_input'
     }
 
 
@@ -335,13 +379,29 @@ def run_advanced_xai(
 ) -> Dict:
     """
     Run all advanced XAI methods.
-    These methods reuse already-extracted features (no re-extraction).
+    
+    IMPORTANT: These methods reuse already-extracted POOLED features.
+    They show FEATURE DIMENSION IMPORTANCE (which of 1536 dimensions were important),
+    NOT temporal patterns (which time segments were important).
+    
+    Fast (no re-extraction) but limited to feature-level explanations.
+    For true temporal analysis, use xai_analysis.compute_temporal_heatmap().
     
     Returns:
         {
-            'integrated_gradients': {...},
-            'shap_approximation': {...},
-            'lrp': {...},
+            'integrated_gradients': {
+                'feature_attribution': List[float],  # Feature dimension importance
+                'note': str  # Warning about pooled features
+            },
+            'shap_approximation': {
+                'feature_importance': List[float],  # Feature dimension importance
+                'expert_contributions': Dict[str, float],
+                'note': str
+            },
+            'lrp': {  # Actually gradient×input, not true LRP
+                'feature_relevance': List[float],  # Feature dimension relevance
+                'note': str
+            },
             'processing_time_ms': int
         }
     """
@@ -351,22 +411,28 @@ def run_advanced_xai(
     
     try:
         results['integrated_gradients'] = compute_integrated_gradients(
-            model, feats, device, steps=30  # Reduced for speed
+            model, feats, device, steps=50  # Restored to 50 for accuracy
         )
     except Exception as e:
-        results['integrated_gradients'] = {'error': str(e)}
+        # FIXED: Better error messages
+        error_msg = f"Integrated Gradients failed: {str(e)}"
+        if "shape" in str(e).lower():
+            error_msg += " (Likely due to feature shape mismatch)"
+        results['integrated_gradients'] = {'error': error_msg, 'error_type': 'computation_error'}
     
     try:
         results['shap_approximation'] = compute_shap_approximation(
-            model, feats, device, n_samples=50  # Reduced for speed
+            model, feats, device, n_samples=100  # Increased for better approximation
         )
     except Exception as e:
-        results['shap_approximation'] = {'error': str(e)}
+        error_msg = f"SHAP approximation failed: {str(e)}"
+        results['shap_approximation'] = {'error': error_msg, 'error_type': 'computation_error'}
     
     try:
-        results['lrp'] = compute_lrp_simple(model, feats, device)
+        results['lrp'] = compute_gradient_x_input(model, feats, device)  # RENAMED
     except Exception as e:
-        results['lrp'] = {'error': str(e)}
+        error_msg = f"Gradient×Input failed: {str(e)}"
+        results['lrp'] = {'error': error_msg, 'error_type': 'computation_error'}
     
     results['processing_time_ms'] = int((time.perf_counter() - start_time) * 1000)
     

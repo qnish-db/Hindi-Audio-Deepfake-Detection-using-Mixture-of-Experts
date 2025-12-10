@@ -8,3 +8,6 @@ tqdm
 pandas
 numpy
 faster-whisper
+seaborn
+scipy
+matplotlib

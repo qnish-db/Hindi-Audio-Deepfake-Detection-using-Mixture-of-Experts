@@ -17,6 +17,7 @@ from moe_model import MoEModel
 from lid_gate import load_lid_model, check_language
 from xai_analysis import run_complete_xai_analysis
 from xai_advanced import run_advanced_xai
+from preprocess_strong import preprocess_strong_from_path
 
 # =========================
 # ENV / PATHS
@@ -133,6 +134,27 @@ def pick_threshold(filename_stem: str) -> Tuple[float, str]:
     return DEFAULT_THR, "default"
 
 # =========================
+# Fuzzy uncertainty helper (inference only)
+# =========================
+def fuzzy_uncertainty(score: float, threshold: float, width_real: float = 0.015, width_fake: float = 0.04) -> float:
+    """
+    Returns an uncertainty value in [0,1] based on distance from the decision threshold.
+    Asymmetric band: narrower on real side, wider on fake side.
+    """
+    try:
+        s = float(score)
+        thr = float(threshold)
+    except Exception:
+        return 0.0
+    if s < thr:
+        d = thr - s
+        u = max(0.0, 1.0 - d / float(width_real))
+    else:
+        d = s - thr
+        u = max(0.0, 1.0 - d / float(width_fake))
+    return float(min(u, 1.0))
+
+# =========================
 # Ground truth index (from TEST_CSV)
 # =========================
 _truth_index: Dict[str, int] = {}
@@ -237,7 +259,13 @@ def get_truth_for(stem: str) -> Tuple[int, str]:
 # Helper for XAI feature extraction
 # =========================
 def _extract_features_for_segment(wav_segment: np.ndarray) -> Dict[str, np.ndarray]:
-    """Extract features from an audio segment for XAI analysis."""
+    """
+    Extract features from an audio segment for XAI analysis.
+    
+    NOTE: For temporal_heatmap, segments are already from preprocessed audio,
+    so we don't re-apply RawBoost/EQ (that would be double-preprocessing).
+    We just extract PTM features directly.
+    """
     feats, _ = extract_both_with_debug(wav_segment)
     return feats
 
@@ -279,16 +307,42 @@ def health():
 def infer(file: UploadFile = File(...)):
     raw = file.file.read()
     t0 = time.perf_counter()
-    try:
-        wav, sr = load_audio_mono_16k(raw)   # strict 16k, no resample
-    except SampleRateError as e:
-        return {"error": str(e), "hint": "Resample audio to 16 kHz mono and try again."}
-
+    
     # =========================
-    # LANGUAGE GATE - Run first
+    # STEP 1: Load CLEAN audio for LID (no preprocessing yet)
+    # =========================
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp.write(raw)
+        tmp_path = Path(tmp.name)
+    
+    # Read clean audio (just resample to 16k, no augmentation)
+    try:
+        import subprocess
+        tmp_clean = tmp_path.with_suffix(".clean.wav")
+        p = subprocess.run(
+            ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+             "-i", str(tmp_path), "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", str(tmp_clean)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        if p.returncode != 0:
+            raise RuntimeError(f"Audio load failed: {p.stderr.decode('utf-8', 'ignore')}")
+        
+        import soundfile as sf
+        wav_clean, sr_clean = sf.read(str(tmp_clean), dtype="float32", always_2d=False)
+        tmp_clean.unlink(missing_ok=True)
+    except Exception as e:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except:
+            pass
+        return {"error": f"Audio load failed: {str(e)}", "hint": "Ensure audio is a valid format (WAV, MP3, etc.)"}
+    
+    # =========================
+    # STEP 2: LANGUAGE GATE - Run on CLEAN audio (before preprocessing)
     # =========================
     t_lid_start = time.perf_counter()
-    lid_result = check_language(wav, sr)
+    lid_result = check_language(wav_clean, sr_clean)
     lid_time_ms = int((time.perf_counter() - t_lid_start) * 1000)
     
     # If language gate rejects, return immediately (MoE skipped)
@@ -313,9 +367,27 @@ def infer(file: UploadFile = File(...)):
             }
         }
     
-    # Language gate passed - continue with MoE inference
-    # Extract PTM features
+    # =========================
+    # STEP 3: Apply preprocessing for MoE (AFTER LID passes)
+    # =========================
+    # Language gate passed - now apply strong preprocessing for MoE
+    try:
+        wav, sr, dbg_pre = preprocess_strong_from_path(tmp_path)
+    except Exception as e:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except:
+            pass
+        return {"error": f"Preprocessing failed: {str(e)}", "hint": "Audio preprocessing error."}
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except:
+            pass
+    
+    # Extract PTM features from PREPROCESSED audio
     feats, dbg = extract_both_with_debug(wav)
+    dbg.update(dbg_pre)  # Add preprocessing times
     dbg["t_lid_ms"] = lid_time_ms
 
     # Model forward
@@ -330,10 +402,20 @@ def infer(file: UploadFile = File(...)):
     # File stem for truth/threshold lookup
     fname = getattr(file, "filename", "") or ""
     stem  = Path(fname).stem
+    print(f"[app] [infer] file={fname} | p_fake={p_fake:.4f}", flush=True)
 
     thr, thr_src = pick_threshold(stem)
     label = int(p_fake >= thr)
     gate_w = {p: float(gates[0, i].item()) for i, p in enumerate(ptms)}
+
+    # Fuzzy uncertainty (asymmetric band around threshold)
+    u = fuzzy_uncertainty(p_fake, thr)
+    if u >= 0.7:
+        uncertainty_level = "high"
+    elif u >= 0.3:
+        uncertainty_level = "medium"
+    else:
+        uncertainty_level = "low"
 
     # Ground truth lookup
     truth_int, truth_str = get_truth_for(stem)
@@ -364,6 +446,8 @@ def infer(file: UploadFile = File(...)):
         "label": label,  # 1=fake, 0=real
         "threshold_used": thr,
         "threshold_source": thr_src,
+        "uncertainty": float(u),
+        "uncertainty_level": uncertainty_level,
         "gate": gate_w,
         "language_check": {
             "lid_engine": lid_result["lid_engine"],

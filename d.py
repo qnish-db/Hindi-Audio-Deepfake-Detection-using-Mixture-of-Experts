@@ -1,70 +1,205 @@
-# save as: scrub_ptm_vectors.py
-import argparse, os
-from pathlib import Path
+"""
+PRE-RUN CHECK for global_xai_CORRECT.py
+Validates all required files exist before running expensive analysis
+"""
 import pandas as pd
+from pathlib import Path
+import numpy as np
 
-def detect_ptm_cols(df):
-    # columns that look like npy path columns
-    cols = []
-    for c in df.columns:
-        if pd.api.types.is_object_dtype(df[c]):
-            s = df[c].dropna().astype(str)
-            if not s.empty and (s.str.endswith(".npy").mean() > 0.8):
-                cols.append(c)
-    return cols
+print("=" * 80)
+print("PRE-RUN CHECK: Validating files for global_xai_CORRECT.py")
+print("=" * 80)
 
-def path_ok(p: str, min_bytes: int) -> bool:
-    try:
-        st = os.stat(p)
-        return st.st_size >= min_bytes
-    except OSError:
-        return False
+# Paths
+CHECKPOINT = "checkpoints/moe_ptm2_v5_aggressive_best.pt"
+TEST_REAL_CSV = "metadata/fs_test_real.labeled.csv"
+TEST_FAKE_CSV = "metadata/fs_test_fake_mms.labeled.csv"
+MASTER_REAL_FLEURS = "metadata/thirdparty_real_test.fleurs.csv"
+MASTER_REAL_TRAIN = "metadata/test_real.from_train.roundrobin_least_damage.csv"
+MASTER_FAKE = "metadata/master_fake.csv"
 
-def scrub_one(csv_path: Path, min_bytes: int, inplace: bool):
-    df = pd.read_csv(csv_path)
-    ptm_cols = detect_ptm_cols(df)
-    if not ptm_cols:
-        print(f"[{csv_path.name}] no .npy columns found; skipped.")
-        return
+errors = []
+warnings = []
 
-    before = len(df)
-    bad_counts = {c: 0 for c in ptm_cols}
-    mask = []
-    for _, row in df.iterrows():
-        ok = True
-        for c in ptm_cols:
-            p = str(row.get(c, ""))
-            if not p or not path_ok(p, min_bytes):
-                ok = False
-                bad_counts[c] += 1
-                break
-        mask.append(ok)
+# Check 1: Checkpoint exists
+print("\n[1/7] Checking checkpoint...")
+if not Path(CHECKPOINT).exists():
+    errors.append(f"❌ Checkpoint not found: {CHECKPOINT}")
+else:
+    print(f"✓ Checkpoint exists: {CHECKPOINT}")
 
-    df2 = df[pd.Series(mask, index=df.index)]
-    after = len(df2)
+# Check 2: Test CSVs exist
+print("\n[2/7] Checking test CSVs...")
+for csv_path in [TEST_REAL_CSV, TEST_FAKE_CSV]:
+    if not Path(csv_path).exists():
+        errors.append(f"❌ CSV not found: {csv_path}")
+    else:
+        print(f"✓ CSV exists: {csv_path}")
 
-    out = csv_path if inplace else csv_path.with_suffix(".sizeok.csv")
-    df2.to_csv(out, index=False)
+# Check 3: Master CSVs exist
+print("\n[3/7] Checking master CSVs (for transcripts)...")
+for csv_path in [MASTER_REAL_FLEURS, MASTER_REAL_TRAIN, MASTER_FAKE]:
+    if not Path(csv_path).exists():
+        errors.append(f"❌ CSV not found: {csv_path}")
+    else:
+        print(f"✓ CSV exists: {csv_path}")
 
-    print(f"[{csv_path.name}] {before} -> {after} rows (dropped {before-after}). "
-          f"Checked cols: {ptm_cols} | min_bytes={min_bytes}")
-    for c, nbad in bad_counts.items():
-        if nbad:
-            print(f"  - {c}: {nbad} rows failed")
+# Check 4: PTM feature files exist
+print("\n[4/7] Checking PTM feature files (sample 10 from each)...")
+test_real = pd.read_csv(TEST_REAL_CSV)
+test_fake = pd.read_csv(TEST_FAKE_CSV)
 
-def main():
-    ap = argparse.ArgumentParser(description="Size-only scrub for PTM .npy columns in CSVs.")
-    ap.add_argument("--csv", nargs="+", required=True, help="One or more CSV paths to scrub")
-    ap.add_argument("--min-bytes", type=int, default=32, help="Min file size in bytes to consider valid")
-    ap.add_argument("--inplace", action="store_true", help="Overwrite original CSVs instead of writing .sizeok.csv")
-    args = ap.parse_args()
+missing_features = 0
+for label, df in [("real", test_real.head(10)), ("fake", test_fake.head(10))]:
+    for idx, row in df.iterrows():
+        for col in ['vec_wav2vec2-base', 'vec_hubert-base']:
+            if col in row:
+                vec_path = row[col]
+                if pd.notna(vec_path):
+                    # Apply path resolution
+                    if "G:\\My Drive\\hindi_dfake\\processed\\features\\ptm" in vec_path:
+                        vec_path = vec_path.replace(
+                            "G:\\My Drive\\hindi_dfake\\processed\\features\\ptm",
+                            r"C:\Users\pc 1\hindi_df\ptm"
+                        )
+                    
+                    if not Path(vec_path).exists():
+                        missing_features += 1
+                        if missing_features <= 3:  # Show first 3
+                            warnings.append(f"⚠ Feature not found: {vec_path}")
 
-    for c in args.csv:
-        p = Path(c)
-        if not p.exists():
-            print(f"[skip] not found: {p}")
-            continue
-        scrub_one(p, args.min_bytes, args.inplace)
+if missing_features > 0:
+    errors.append(f"❌ {missing_features} PTM feature files missing!")
+else:
+    print(f"✓ All sampled PTM features exist")
 
-if __name__ == "__main__":
-    main()
+# Check 5: Audio files - DO WE NEED THEM?
+print("\n[5/7] Checking if audio files are needed...")
+print("⚠ IMPORTANT: Script loads audio for frequency_contribution()")
+print("   But perturbation approximation only needs FEATURES (no audio)")
+print("   → Audio is OPTIONAL if you skip frequency analysis")
+
+# Audio path resolution (from runner scripts)
+def resolve_audio_path(path_str):
+    """Resolve audio path - they're in G drive processed/wav/strong/"""
+    if pd.isna(path_str):
+        return None
+    
+    # Already correct path
+    if Path(path_str).exists():
+        return path_str
+    
+    # Path is in G drive - check if accessible
+    if "G:\\My Drive\\hindi_dfake" in path_str or "G:/My Drive/hindi_dfake" in path_str:
+        return path_str if Path(path_str).exists() else None
+    
+    # Try to construct G drive path
+    if "/processed/wav/strong/" in path_str:
+        tail = path_str.split("/processed/wav/strong/")[1]
+        g_path = f"G:\\My Drive\\hindi_dfake\\processed\\wav\\strong\\{tail}"
+        return g_path if Path(g_path).exists() else None
+    
+    return None
+
+audio_missing = 0
+audio_on_gdrive = 0
+audio_accessible = 0
+
+for label, df in [("real", test_real.head(10)), ("fake", test_fake.head(10))]:
+    for idx, row in df.iterrows():
+        audio_path = row.get('path_audio')
+        resolved = resolve_audio_path(audio_path)
+        
+        if resolved is None:
+            audio_missing += 1
+        elif "G:\\My Drive" in resolved or "G:/My Drive" in resolved:
+            audio_on_gdrive += 1
+            if Path(resolved).exists():
+                audio_accessible += 1
+        else:
+            if Path(resolved).exists():
+                audio_accessible += 1
+
+print(f"  Audio files: {audio_accessible} accessible, {audio_on_gdrive} on G drive, {audio_missing} missing")
+
+if audio_accessible == 0 and audio_on_gdrive > 0:
+    warnings.append(f"⚠ All audio on G drive - check if G drive is mounted")
+elif audio_missing > 0:
+    warnings.append(f"⚠ {audio_missing}/20 sampled audio files missing")
+    warnings.append("   → Frequency analysis will be skipped for missing files")
+else:
+    print(f"✓ All sampled audio files accessible")
+
+# Check 6: Transcripts coverage
+print("\n[6/7] Checking transcript coverage...")
+master_real_fleurs = pd.read_csv(MASTER_REAL_FLEURS)
+master_real_train = pd.read_csv(MASTER_REAL_TRAIN)
+master_fake = pd.read_csv(MASTER_FAKE)
+
+transcript_lookup = {}
+for _, row in master_real_fleurs.iterrows():
+    transcript_lookup[row['utt_id']] = row['text']
+for _, row in master_real_train.iterrows():
+    transcript_lookup[row['utt_id']] = row['text']
+for _, row in master_fake.iterrows():
+    transcript_lookup[row['utt_id']] = row['text']
+
+transcripts_found = 0
+for label, df in [("real", test_real.head(10)), ("fake", test_fake.head(10))]:
+    for idx, row in df.iterrows():
+        audio_path = row.get('path_audio')
+        if pd.notna(audio_path):
+            utt_id = Path(audio_path).stem
+            if utt_id in transcript_lookup:
+                transcripts_found += 1
+
+print(f"✓ Transcripts found: {transcripts_found}/20 samples")
+if transcripts_found < 15:
+    warnings.append(f"⚠ Low transcript coverage: {transcripts_found}/20")
+
+# Check 7: Dependencies
+print("\n[7/7] Checking Python dependencies...")
+try:
+    import torch
+    print(f"✓ torch: {torch.__version__}")
+except:
+    errors.append("❌ torch not installed")
+
+try:
+    import librosa
+    print(f"✓ librosa: {librosa.__version__}")
+except:
+    warnings.append("⚠ librosa not installed (needed for frequency analysis)")
+
+try:
+    from scipy import stats
+    print(f"✓ scipy installed")
+except:
+    errors.append("❌ scipy not installed")
+
+# Summary
+print("\n" + "=" * 80)
+print("SUMMARY")
+print("=" * 80)
+
+if errors:
+    print(f"\n❌ CRITICAL ERRORS ({len(errors)}):")
+    for err in errors:
+        print(f"  {err}")
+    print("\n⛔ DO NOT RUN - Fix errors first!")
+else:
+    print("\n✅ All critical checks passed!")
+
+if warnings:
+    print(f"\n⚠ WARNINGS ({len(warnings)}):")
+    for warn in warnings:
+        print(f"  {warn}")
+    print("\n⚠ Script may run with limited functionality")
+
+if not errors:
+    print("\n" + "=" * 80)
+    print("READY TO RUN:")
+    print("  python global_xai_CORRECT.py --checkpoint checkpoints/moe_ptm2_v5_aggressive_best.pt --max-samples 10")
+    print("=" * 80)
+
+print()

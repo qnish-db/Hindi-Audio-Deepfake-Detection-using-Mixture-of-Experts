@@ -12,6 +12,7 @@ TARGET_DB   = -26.0  # per-file RMS target
 def _rms_dbfs_arr(x: np.ndarray) -> float:
     if x.ndim > 1: x = x.mean(axis=1)
     if len(x) == 0: return -120.0
+    
     rms = float(np.sqrt(np.mean(np.square(x))))
     if rms <= 1e-9: return -120.0
     return 20.0*np.log10(min(max(rms, 1e-9), 1.0))
@@ -57,12 +58,25 @@ def _add_small_reverb(x, sr, rng, t_sec=0.03, decay=0.35, wet=0.18):
     return np.clip((1.0 - wet) * x + wet * y, -1.0, 1.0)
 
 def rawboost_v3(x: np.ndarray, sr: int, key: str) -> np.ndarray:
+    """
+    RawBoost v3 augmentation - EXACT match to training notebook.
+    
+    Applies (deterministically based on key):
+    - Colored noise (2500-6000 Hz, SNR=25dB) with prob=1.0
+    - Impulses (1.0/sec, gain=0.08) with prob=0.5
+    - Small reverb (t=0.03s, decay=0.35, wet=0.18) with prob=0.6
+    """
     if x.ndim > 1: x = x.mean(axis=1)
     x = np.clip(x, -1.0, 1.0).astype(np.float32)
     rng = _rng_from_key(key)
-    x = _add_colored_noise(x, sr, rng, (2500,6000), 25.0)
-    x = _add_impulses(x, sr, rng, 1.0, 0.08)
-    x = _add_small_reverb(x, sr, rng, 0.03, 0.35, 0.18)
+    
+    # MATCH TRAINING: Apply with probabilities
+    if rng.uniform() < 1.0:  # RB_NOISE_PROB = 1.0 (always)
+        x = _add_colored_noise(x, sr, rng, (2500,6000), 25.0)
+    if rng.uniform() < 0.5:  # RB_IMPULSE_PROB = 0.5
+        x = _add_impulses(x, sr, rng, 1.0, 0.08)
+    if rng.uniform() < 0.6:  # RB_REVERB_PROB = 0.6
+        x = _add_small_reverb(x, sr, rng, 0.03, 0.35, 0.18)
     return x
 
 def _ffmpeg(*args):

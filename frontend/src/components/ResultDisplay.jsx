@@ -260,6 +260,8 @@ const ResultDisplay = ({ result, fileName, fileSize, onReset }) => {
 
   const isFake = result.label === 1;
   const confidence = result.prob_fake !== undefined ? (Number(result.prob_fake) * 100).toFixed(2) : '0.00';
+  const uncertainty = (typeof result.uncertainty === 'number') ? result.uncertainty : null;
+  const uncertaintyLevel = (typeof result.uncertainty_level === 'string') ? result.uncertainty_level : null;
 
   return (
     <div style={{ 
@@ -270,7 +272,6 @@ const ResultDisplay = ({ result, fileName, fileSize, onReset }) => {
       fontFamily: "'Montserrat', sans-serif"
     }}>
       <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-        
         {/* Hero Result Card */}
         <div style={{
           background: isFake 
@@ -278,10 +279,10 @@ const ResultDisplay = ({ result, fileName, fileSize, onReset }) => {
             : 'linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(22, 163, 74, 0.05) 100%)',
           border: `2px solid ${isFake ? 'rgba(239, 68, 68, 0.3)' : 'rgba(34, 197, 94, 0.3)'}`,
           borderRadius: '32px',
-          padding: '80px 60px',
-          marginBottom: '40px',
+          padding: '100px 60px',
           position: 'relative',
-          overflow: 'hidden'
+          overflow: 'hidden',
+          minHeight: '500px'
         }}>
           {/* Background Pattern */}
           <div style={{
@@ -337,161 +338,90 @@ const ResultDisplay = ({ result, fileName, fileSize, onReset }) => {
               {labelText(result.label)}
             </div>
 
-            {/* Confidence Bar */}
-            <div style={{ marginTop: '50px' }}>
-              <div style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '16px'
-              }}>
-                <span style={{ color: '#888', fontSize: '18px', fontWeight: '600' }}>Confidence Score</span>
-                <span style={{ 
-                  color: '#fff',
-                  fontSize: '36px',
-                  fontWeight: '900'
-                }}>{confidence}%</span>
-              </div>
-              <div style={{
-                width: '100%',
-                height: '16px',
-                background: 'rgba(255, 255, 255, 0.1)',
-                borderRadius: '50px',
-                overflow: 'hidden',
-                position: 'relative'
-              }}>
-                <div style={{
-                  width: `${confidence}%`,
-                  height: '100%',
-                  background: isFake 
-                    ? 'linear-gradient(90deg, #ef4444 0%, #dc2626 100%)'
-                    : 'linear-gradient(90deg, #22c55e 0%, #16a34a 100%)',
-                  borderRadius: '50px',
-                  transition: 'width 1s ease-out',
-                  boxShadow: `0 0 20px ${isFake ? '#ef4444' : '#22c55e'}`
-                }} />
-              </div>
-            </div>
           </div>
         </div>
 
-        {/* Info Grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px', marginBottom: '40px' }}>
-          {/* File Info Card */}
+        {/* Uncertainty warnings from backend */}
+        {uncertaintyLevel === 'medium' && (
           <div style={{
-            background: 'linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%)',
-            border: '1px solid #2a2a2a',
+            background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(245, 158, 11, 0.06) 100%)',
+            border: '1px solid rgba(245, 158, 11, 0.35)',
             borderRadius: '24px',
-            padding: '32px'
+            padding: '24px',
+            marginTop: '24px'
           }}>
-            <div style={{ 
-              width: '48px',
-              height: '48px',
-              background: 'linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%)',
-              border: '1px solid #333',
-              borderRadius: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: '20px'
-            }}>
-              <svg width="24" height="24" fill="white" viewBox="0 0 20 20">
-                <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="#f59e0b" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
               </svg>
+              <h4 style={{ color: '#f59e0b', fontSize: '18px', fontWeight: 800, margin: 0 }}>Moderate Uncertainty</h4>
             </div>
-            <h3 style={{ color: '#fff', fontSize: '20px', fontWeight: '700', marginBottom: '16px' }}>Audio File</h3>
-            <p style={{ color: '#666', fontSize: '14px', marginBottom: '8px' }}>{truncateFilename(fileName)}</p>
-            <div style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>
-              <div>
-                <div style={{ color: '#666', fontSize: '12px', marginBottom: '4px' }}>Size</div>
-                <div style={{ color: '#fff', fontSize: '16px', fontWeight: '600' }}>{formatSize(fileSize)}</div>
-              </div>
-              <div>
-                <div style={{ color: '#666', fontSize: '12px', marginBottom: '4px' }}>Duration</div>
-                <div style={{ color: '#fff', fontSize: '16px', fontWeight: '600' }}>{result.debug?.audio_sec}s</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Threshold Card */}
-          <div style={{
-            background: 'linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%)',
-            border: '1px solid #2a2a2a',
-            borderRadius: '24px',
-            padding: '32px'
-          }}>
-            <div style={{ 
-              width: '48px',
-              height: '48px',
-              background: 'linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%)',
-              border: '1px solid #333',
-              borderRadius: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: '20px'
-            }}>
-              <svg width="24" height="24" fill="white" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <h3 style={{ color: '#fff', fontSize: '20px', fontWeight: '700', marginBottom: '16px' }}>Threshold</h3>
-            <p style={{ color: '#fff', fontSize: '24px', fontWeight: '700', fontFamily: 'monospace' }}>
-              {typeof result.threshold_used === 'number' ? result.threshold_used.toFixed(6) : '—'}
+            <p style={{ color: '#bfbfbf', margin: 0, lineHeight: 1.6 }}>
+              Note: this prediction is moderately close to the decision boundary. Treat this result with some caution.
+              {typeof uncertainty === 'number' && (
+                <span style={{ color: '#d4d4d4' }}> (uncertainty {(uncertainty*100).toFixed(0)}%)</span>
+              )}
             </p>
-            <p style={{ color: '#666', fontSize: '14px', marginTop: '8px' }}>{result.threshold_source || 'Default'}</p>
           </div>
+        )}
 
-          {/* Device Card */}
+        {uncertaintyLevel === 'high' && (
           <div style={{
-            background: 'linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%)',
-            border: '1px solid #2a2a2a',
+            background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(239, 68, 68, 0.06) 100%)',
+            border: '1px solid rgba(239, 68, 68, 0.35)',
             borderRadius: '24px',
-            padding: '32px'
+            padding: '24px',
+            marginTop: '24px'
           }}>
-            <div style={{ 
-              width: '48px',
-              height: '48px',
-              background: 'linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%)',
-              border: '1px solid #333',
-              borderRadius: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: '20px'
-            }}>
-              <svg width="24" height="24" fill="white" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M3 5a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2h-2.22l.123.489.804.804A1 1 0 0113 18H7a1 1 0 01-.707-1.707l.804-.804L7.22 15H5a2 2 0 01-2-2V5zm5.771 7H5V5h10v7H8.771z" clipRule="evenodd" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="#ef4444" xmlns="http://www.w3.org/2000/svg">
+                <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
               </svg>
+              <h4 style={{ color: '#ef4444', fontSize: '18px', fontWeight: 800, margin: 0 }}>High Uncertainty</h4>
             </div>
-            <h3 style={{ color: '#fff', fontSize: '20px', fontWeight: '700', marginBottom: '16px' }}>Processing</h3>
-            <p style={{ color: '#fff', fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>{result.meta?.device || 'CPU'}</p>
-            <p style={{ color: '#666', fontSize: '14px' }}>Total: {result.debug?.t_overall_ms}ms</p>
+            <p style={{ color: '#bfbfbf', margin: 0, lineHeight: 1.6 }}>
+              Warning: this prediction is very close to the model’s decision boundary. In our tests, this region has a higher error rate. Do not rely on this result alone.
+              {typeof uncertainty === 'number' && (
+                <span style={{ color: '#d4d4d4' }}> (uncertainty {(uncertainty*100).toFixed(0)}%)</span>
+              )}
+            </p>
           </div>
-        </div>
+        )}
 
         {/* Action Button */}
-        <button
-          onClick={onReset}
-          className="shimmer-btn"
-          style={{
-            width: '100%',
-            background: 'linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%)',
-            border: '1px solid #333',
-            borderRadius: '16px',
-            padding: '20px',
-            color: 'white',
-            fontSize: '18px',
-            fontWeight: '700',
-            cursor: 'pointer',
-            position: 'relative',
-            overflow: 'hidden',
-            boxShadow: '0 10px 40px rgba(0, 0, 0, 0.5)'
-          }}
-        >
-          <div className="shimmer" />
-          <span style={{ position: 'relative', zIndex: 1 }}>Analyze New File</span>
-        </button>
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '40px' }}>
+          <button
+            onClick={onReset}
+            className="shimmer-btn"
+            style={{
+              width: '60%',
+              maxWidth: '600px',
+              background: 'linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%)',
+              border: '1px solid #2a2a2a',
+              borderRadius: '16px',
+              padding: '20px',
+              color: 'white',
+              fontSize: '18px',
+              fontWeight: '700',
+              cursor: 'pointer',
+              position: 'relative',
+              overflow: 'hidden',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+              transition: 'all 0.3s ease'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 12px 40px rgba(0, 0, 0, 0.8)';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.6)';
+            }}
+          >
+            <div className="shimmer" />
+            <span style={{ position: 'relative', zIndex: 1 }}>Analyze New File</span>
+          </button>
+        </div>
 
         {/* Language Check Info */}
         {result.language_check && (
@@ -586,29 +516,25 @@ const ResultDisplay = ({ result, fileName, fileSize, onReset }) => {
             </div>
           )}
 
-          {/* Model Info */}
-          <div style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid #2a2a2a' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', fontSize: '14px' }}>
-              <div>
-                <span style={{ color: '#666' }}>Checkpoint:</span>
-                <span style={{ color: '#fff', marginLeft: '8px', fontFamily: 'monospace' }}>{result.meta?.checkpoint || '—'}</span>
+          {/* Audio File Details */}
+          <div style={{ marginTop: '32px', paddingTop: '32px', borderTop: '1px solid #2a2a2a' }}>
+            <h4 style={{ color: '#888', fontSize: '16px', fontWeight: '600', marginBottom: '16px' }}>Audio File Details</h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+              <div style={{ padding: '16px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '8px' }}>
+                <div style={{ color: '#666', fontSize: '12px', marginBottom: '6px' }}>File Name</div>
+                <div style={{ color: '#fff', fontSize: '14px', fontWeight: '600', wordBreak: 'break-all' }}>{truncateFilename(fileName)}</div>
               </div>
-              <div>
-                <span style={{ color: '#666' }}>Run Name:</span>
-                <span style={{ color: '#fff', marginLeft: '8px', fontFamily: 'monospace' }}>{result.meta?.run_name || '—'}</span>
+              <div style={{ padding: '16px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '8px' }}>
+                <div style={{ color: '#666', fontSize: '12px', marginBottom: '6px' }}>File Size</div>
+                <div style={{ color: '#fff', fontSize: '14px', fontWeight: '600' }}>{formatSize(fileSize)}</div>
               </div>
-              <div>
-                <span style={{ color: '#666' }}>Best Val EER:</span>
-                <span style={{ color: '#fff', marginLeft: '8px', fontFamily: 'monospace' }}>{result.meta?.best_val_eer ? Number(result.meta.best_val_eer).toFixed(4) : '—'}</span>
+              <div style={{ padding: '16px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '8px' }}>
+                <div style={{ color: '#666', fontSize: '12px', marginBottom: '6px' }}>Duration</div>
+                <div style={{ color: '#fff', fontSize: '14px', fontWeight: '600' }}>{result.debug?.audio_sec}s</div>
               </div>
-              {result.truth_label_str && (
-                <div>
-                  <span style={{ color: '#666' }}>Ground Truth:</span>
-                  <span style={{ color: '#fff', marginLeft: '8px', fontFamily: 'monospace' }}>{result.truth_label_str}</span>
-                </div>
-              )}
             </div>
           </div>
+
         </div>
 
         {/* XAI BUTTON */}
@@ -621,23 +547,27 @@ const ResultDisplay = ({ result, fileName, fileSize, onReset }) => {
               onClick={handleGenerateXAI}
               style={{
                 padding: '24px 48px',
-                background: isFake 
-                  ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'
-                  : 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
-                border: 'none',
+                background: 'linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%)',
+                border: '1px solid #2a2a2a',
                 borderRadius: '16px',
                 color: 'white',
                 fontSize: '20px',
                 fontWeight: '700',
                 cursor: 'pointer',
-                boxShadow: `0 10px 40px ${isFake ? 'rgba(239, 68, 68, 0.4)' : 'rgba(34, 197, 94, 0.4)'}`,
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
                 transition: 'all 0.3s ease',
                 letterSpacing: '0.5px'
               }}
-              onMouseOver={(e) => e.target.style.transform = 'translateY(-2px)'}
-              onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
+              onMouseOver={(e) => {
+                e.target.style.transform = 'translateY(-2px)';
+                e.target.style.boxShadow = '0 12px 40px rgba(0, 0, 0, 0.8)';
+              }}
+              onMouseOut={(e) => {
+                e.target.style.transform = 'translateY(0)';
+                e.target.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.6)';
+              }}
             >
-              🔍 Generate Explainability Analysis
+              Generate Explainability Analysis
             </button>
             <p style={{ color: '#666', fontSize: '14px', marginTop: '16px' }}>
               Detailed AI decision explanations, temporal analysis, and visual breakdowns
@@ -707,6 +637,7 @@ const ResultDisplay = ({ result, fileName, fileSize, onReset }) => {
         )}
 
       </div>
+      {/* End of main content area */}
     </div>
   );
 };

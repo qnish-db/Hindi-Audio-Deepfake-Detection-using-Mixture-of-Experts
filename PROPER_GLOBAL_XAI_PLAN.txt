@@ -1,0 +1,81 @@
+# PROPER GLOBAL XAI ANALYSIS - WHAT WE ACTUALLY NEED
+
+## REALITY CHECK:
+Your model uses POOLED features (mean/std over time) - so there's NO true temporal information.
+The "temporal_attribution" in xai_advanced.py is SIMULATED by smoothing feature importance.
+
+## WHAT WE CAN ACTUALLY DO:
+
+### 1. INTEGRATED GRADIENTS - Feature Importance (NOT time segments)
+- IG returns: feature-level importance (1536 dims from PTMs)
+- Global aggregation: Average feature importance across all real vs fake
+- Visualization: Which feature dimensions matter most
+- **NOT temporal** - model doesn't see time, only pooled stats
+
+### 2. SHAP - Expert Contributions (NOT frequency bands)
+- SHAP returns: expert_contributions (wav2vec2 vs hubert)
+- Global aggregation: Which PTM expert is more important for detection
+- Visualization: Expert contribution distribution
+- **NOT frequency** - model doesn't analyze frequency, only PTM embeddings
+
+### 3. TRANSCRIPT ANALYSIS - THIS IS THE GOLD
+- Join test CSVs with master_real.csv / master_fake.csv on utt_id
+- Extract transcripts (text column)
+- Analyze:
+  a) Word-level patterns (which words trigger detection)
+  b) Syllable complexity (multi-syllable vs simple)
+  c) Character/phoneme errors (if we have ASR output)
+  d) Cross-reference with XAI: which samples have high IG scores + complex words
+
+## WHAT THE FRONTEND SHOULD SHOW:
+
+### Chart 1: Feature Importance Distribution
+- X-axis: Feature dimension (0-1535)
+- Y-axis: Average importance
+- Two lines: Real (green) vs Fake (red)
+- Insight: "Features 800-1200 are more important for fake detection"
+
+### Chart 2: Expert Contributions
+- Bar chart: wav2vec2 vs hubert contribution
+- Real vs Fake comparison
+- Insight: "HuBERT contributes more to fake detection"
+
+### Chart 3: Word Complexity Analysis
+- X-axis: Word syllable count (1, 2, 3, 4+)
+- Y-axis: Detection rate
+- Insight: "3+ syllable words trigger fake detection 78% of the time"
+
+### Chart 4: Top Flagged Words
+- Word cloud or bar chart
+- Words most associated with fake detection
+- Insight: "Words like 'algorithm', 'important' are red flags"
+
+### Chart 5: Transcript Timeline (if we have timestamps)
+- Timeline showing which parts of transcript align with high XAI scores
+- Cross-reference: "High IG score at sample X aligns with word 'birthday'"
+
+## IMPLEMENTATION STEPS:
+
+1. Fix global_xai_analysis.py to:
+   - Aggregate feature importance (not fake temporal data)
+   - Aggregate expert contributions
+   - Join with master CSVs to get transcripts
+   - Analyze word patterns
+   - Save proper JSON outputs
+
+2. Fix GlobalXAI.jsx to show:
+   - Feature importance chart (real vs fake)
+   - Expert contribution chart
+   - Word complexity chart
+   - Top flagged words
+   - Clear explanations (NO bullshit about temporal/frequency)
+
+## STOP LYING ABOUT:
+- "Time segments" - model doesn't see time
+- "Frequency bands" - model doesn't analyze frequency
+- Model sees: pooled PTM embeddings (mean/std of wav2vec2 + hubert features)
+
+## BE HONEST ABOUT:
+- Feature-level importance (which embedding dimensions matter)
+- Expert-level importance (which PTM is more useful)
+- Linguistic patterns (which words/syllables trigger detection)

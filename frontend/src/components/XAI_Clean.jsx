@@ -3,8 +3,14 @@ import React from 'react';
 // Clean, minimal XAI components - no fancy animations, just entry fade-in
 
 export const IntegratedGradientsCard = ({ data, accentColor, delay, audioDuration, isFake }) => {
-  if (!data?.temporal_attribution) return null;
-  const scores = data.temporal_attribution;
+  // Backend returns 'feature_attribution', not 'temporal_attribution'
+  if (!data?.feature_attribution) {
+    return null;
+  }
+  const scores = data.feature_attribution;
+  if (!Array.isArray(scores) || scores.length === 0) {
+    return null;
+  }
   const maxAttr = Math.max(...scores.map(Math.abs), 0.001);
   
   // Use actual audio duration if provided, otherwise estimate
@@ -36,47 +42,48 @@ export const IntegratedGradientsCard = ({ data, accentColor, delay, audioDuratio
     ? "contributed most to FAKE detection" 
     : "contributed most to REAL classification";
   const highAttrColor = accentColor; // Use prediction color (red for fake, green for real)
-  
-  // Interpretation of high regions count
-  const regionInterpretation = isFake
-    ? (peakRegions > 10 ? "Many segments triggered fake detection" : 
-       peakRegions > 3 ? "Several segments triggered fake detection" : 
-       "Few segments triggered fake detection")
-    : (peakRegions > 10 ? "Many segments strongly indicated real speech" : 
-       peakRegions > 3 ? "Several segments strongly indicated real speech" : 
-       "Few segments strongly indicated real speech");
 
   return (
     <div style={{ opacity: 0, animation: `fadeIn 0.6s ease-out ${delay}ms forwards` }}>
       <div style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #141414 100%)', border: '2px solid #2a2a2a', borderRadius: '24px', padding: '48px', marginBottom: '32px', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
         <div style={{ marginBottom: '40px' }}>
-          <h3 style={{ color: '#fff', fontSize: '32px', fontWeight: '900', marginBottom: '12px', letterSpacing: '-0.5px' }}>⚡ Integrated Gradients</h3>
+          <h3 style={{ color: '#fff', fontSize: '32px', fontWeight: '900', marginBottom: '12px', letterSpacing: '-0.5px' }}>Integrated Gradients - Feature Attribution</h3>
           <p style={{ color: '#888', fontSize: '15px', lineHeight: '1.7', maxWidth: '800px' }}>
-            Shows <span style={{ color: accentColor, fontWeight: '700' }}>which time segments</span> {highAttrMeaning}. 
+            Shows <span style={{ color: accentColor, fontWeight: '700' }}>which feature dimensions</span> {highAttrMeaning}. 
             Wave amplitude represents attribution strength - larger waves = stronger influence on the <span style={{ fontWeight: '700' }}>{isFake ? 'FAKE' : 'REAL'}</span> prediction.
+            <br /><span style={{ fontSize: '13px', color: '#666', fontStyle: 'italic', marginTop: '8px', display: 'block' }}>
+              Note: This visualizes the 1536 feature dimensions (768 from each audio model) that were important for the prediction.
+            </span>
           </p>
-          <div style={{ marginTop: '16px', padding: '16px', background: 'rgba(59, 130, 246, 0.1)', borderRadius: '12px', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
-            <div style={{ color: '#3b82f6', fontSize: '12px', fontWeight: '700', marginBottom: '8px', letterSpacing: '0.5px' }}>💡 HOW IT WORKS</div>
+          <div style={{ marginTop: '16px', padding: '20px', background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(59, 130, 246, 0.04) 100%)', borderRadius: '12px', border: '1px solid rgba(59, 130, 246, 0.25)', boxShadow: '0 4px 16px rgba(59, 130, 246, 0.1)' }}>
+            <div style={{ color: '#3b82f6', fontSize: '12px', fontWeight: '700', marginBottom: '8px', letterSpacing: '0.5px' }}>HOW IT WORKS</div>
             <p style={{ color: '#aaa', fontSize: '13px', lineHeight: '1.6' }}>
-              Think of it like asking the AI: <span style={{ fontStyle: 'italic', color: '#fff' }}>"If I removed this time segment, would your prediction change?"</span>
-              <br />• <strong>High waves</strong> = "Yes! This segment was crucial for my decision"
-              <br />• <strong>Low waves</strong> = "Not really, this segment didn't matter much"
-              <br />• <strong style={{ color: accentColor }}>Highlighted peaks</strong> = The most important segments (top 25% influence)
+              Think of it like asking the AI: <span style={{ fontStyle: 'italic', color: '#fff' }}>"If I changed this feature dimension, would your prediction change?"</span>
+              <br />• <strong>High waves</strong> = "Yes! This feature was crucial for my decision"
+              <br />• <strong>Low waves</strong> = "Not really, this feature didn't matter much"
+              <br />• <strong style={{ color: accentColor }}>Highlighted peaks</strong> = The most important features (top 25% influence)
             </p>
           </div>
         </div>
 
         {/* Waveform Visualization */}
-        <div style={{ background: 'rgba(0,0,0,0.6)', borderRadius: '16px', padding: '32px 24px', border: '1px solid rgba(255,255,255,0.05)', position: 'relative', overflow: 'hidden' }}>
+        <div style={{ background: 'rgba(0,0,0,0.4)', borderRadius: '16px', padding: '32px 24px', border: '1px solid rgba(255,255,255,0.08)', position: 'relative', overflow: 'hidden', boxShadow: 'inset 0 2px 12px rgba(0,0,0,0.3)' }}>
           <svg width="100%" height="280" viewBox="0 0 1200 280" preserveAspectRatio="none" style={{ display: 'block' }}>
             <defs>
               <linearGradient id="attrGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor={accentColor} stopOpacity="0.8" />
-                <stop offset="50%" stopColor="#3b82f6" stopOpacity="0.5" />
-                <stop offset="100%" stopColor={accentColor} stopOpacity="0.2" />
+                <stop offset="0%" stopColor={accentColor} stopOpacity="0.9" />
+                <stop offset="50%" stopColor="#3b82f6" stopOpacity="0.6" />
+                <stop offset="100%" stopColor={accentColor} stopOpacity="0.3" />
               </linearGradient>
               <filter id="attrGlow">
-                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+                <feMerge>
+                  <feMergeNode in="coloredBlur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
+              <filter id="strongGlow">
+                <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
                 <feMerge>
                   <feMergeNode in="coloredBlur"/>
                   <feMergeNode in="SourceGraphic"/>
@@ -87,11 +94,11 @@ export const IntegratedGradientsCard = ({ data, accentColor, delay, audioDuratio
             {/* Grid lines */}
             {[0, 25, 50, 75, 100].map(pct => (
               <line key={pct} x1="0" y1={280 - (pct / 100) * 280} x2="1200" y2={280 - (pct / 100) * 280}
-                stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
+                stroke="rgba(255,255,255,0.02)" strokeWidth="1" strokeDasharray="4 6" />
             ))}
 
             {/* Center line */}
-            <line x1="0" y1="140" x2="1200" y2="140" stroke="rgba(255,255,255,0.1)" strokeWidth="2" strokeDasharray="8,4" />
+            <line x1="0" y1="140" x2="1200" y2="140" stroke="rgba(255,255,255,0.12)" strokeWidth="2" strokeDasharray="8,4" />
 
             {/* High attribution background regions */}
             {normalized.map((norm, i) => {
@@ -131,7 +138,7 @@ export const IntegratedGradientsCard = ({ data, accentColor, delay, audioDuratio
                 path += `L ${x},${y} `;
               });
               return path;
-            })()} fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" filter="url(#attrGlow)" />
+            })()} fill="none" stroke="#3b82f6" strokeWidth="3" strokeLinecap="round" filter="url(#attrGlow)" />
 
             {/* Attribution waveform - bottom stroke */}
             <path d={(() => {
@@ -142,7 +149,7 @@ export const IntegratedGradientsCard = ({ data, accentColor, delay, audioDuratio
                 path += `L ${x},${y} `;
               });
               return path;
-            })()} fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" filter="url(#attrGlow)" />
+            })()} fill="none" stroke="#3b82f6" strokeWidth="3" strokeLinecap="round" filter="url(#attrGlow)" />
 
             {/* High attribution overlay - MUST match threshold used in count (0.75) */}
             <path d={(() => {
@@ -186,11 +193,11 @@ export const IntegratedGradientsCard = ({ data, accentColor, delay, audioDuratio
             })()} fill="none" stroke={highAttrColor} strokeWidth="3.5" strokeLinecap="round" filter="url(#attrGlow)" />
           </svg>
 
-          {/* Timeline */}
+          {/* Feature dimension axis */}
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.06)', color: '#666', fontSize: '13px', fontWeight: '700' }}>
-            <span>0.0s</span>
-            <span style={{ color: '#888' }}>TIME →</span>
-            <span>{maxTime.toFixed(1)}s</span>
+            <span>Dimension 0</span>
+            <span style={{ color: '#888' }}>FEATURE DIMENSIONS →</span>
+            <span>Dimension {scores.length}</span>
           </div>
         </div>
 
@@ -201,9 +208,9 @@ export const IntegratedGradientsCard = ({ data, accentColor, delay, audioDuratio
             <div style={{ color: '#fff', fontSize: '32px', fontWeight: '900' }}>{(Math.max(...normalized) * 100).toFixed(0)}%</div>
           </div>
           <div style={{ padding: '20px', background: `${accentColor}10`, borderRadius: '12px', border: `1px solid ${accentColor}30`, textAlign: 'center' }}>
-            <div style={{ color: '#888', fontSize: '11px', marginBottom: '8px', fontWeight: '700' }}>KEY SEGMENTS</div>
+            <div style={{ color: '#888', fontSize: '11px', marginBottom: '8px', fontWeight: '700' }}>KEY FEATURES</div>
             <div style={{ color: accentColor, fontSize: '32px', fontWeight: '900' }}>{peakRegions}</div>
-            <div style={{ color: '#666', fontSize: '10px', marginTop: '4px' }}>{regionInterpretation}</div>
+            <div style={{ color: '#666', fontSize: '10px', marginTop: '4px' }}>High-importance features</div>
           </div>
           <div style={{ padding: '20px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)', textAlign: 'center' }}>
             <div style={{ color: '#888', fontSize: '11px', marginBottom: '8px', fontWeight: '700' }}>AVG ATTRIBUTION</div>
@@ -219,19 +226,25 @@ export const IntegratedGradientsCard = ({ data, accentColor, delay, audioDuratio
 export const SHAPCard = ({ data, accentColor, delay, isFake }) => {
   if (!data?.expert_contributions) return null;
   const bands = [
-    { name: '0-500 Hz', label: 'Low Freq', color: '#8b5cf6', desc: 'Bass & rumble' },
-    { name: '500-1k Hz', label: 'Mid-Low', color: '#3b82f6', desc: 'Voice fundamentals' },
-    { name: '1-2k Hz', label: 'Mid Freq', color: '#10b981', desc: 'Vocal clarity' },
-    { name: '2-4k Hz', label: 'Mid-High', color: '#fbbf24', desc: 'Consonants' },
-    { name: '4-8k Hz', label: 'High Freq', color: '#f97316', desc: 'Sibilance' },
-    { name: '8k+ Hz', label: 'Ultra-High', color: '#ef4444', desc: 'Air & breath' }
+    { name: '0-250 Hz', label: 'Sub-Low', color: '#8b5cf6', desc: 'Bass & rumble' },
+    { name: '250-500 Hz', label: 'Low', color: '#7c3aed', desc: 'Warmth' },
+    { name: '500-1k Hz', label: 'Low-Mid', color: '#3b82f6', desc: 'Body' },
+    { name: '1-1.5k Hz', label: 'Mid', color: '#0ea5e9', desc: 'Fundamentals' },
+    { name: '1.5-2k Hz', label: 'High-Mid', color: '#10b981', desc: 'Clarity' },
+    { name: '2-3k Hz', label: 'Presence', color: '#14b8a6', desc: 'Vocal definition' },
+    { name: '3-4k Hz', label: 'Upper-Mid', color: '#fbbf24', desc: 'Consonants' },
+    { name: '4-6k Hz', label: 'High', color: '#f59e0b', desc: 'Intelligibility' },
+    { name: '6-8k Hz', label: 'Upper-High', color: '#f97316', desc: 'Sibilance' },
+    { name: '8-12k Hz', label: 'Brilliance', color: '#ef4444', desc: 'Air & space' },
+    { name: '12-16k Hz', label: 'Ultra-High', color: '#dc2626', desc: 'Breath detail' },
+    { name: '16k+ Hz', label: 'Extreme', color: '#b91c1c', desc: 'Harmonics' }
   ];
 
   return (
     <div style={{ opacity: 0, animation: `fadeIn 0.6s ease-out ${delay}ms forwards` }}>
       <div style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #141414 100%)', border: '2px solid #2a2a2a', borderRadius: '24px', padding: '48px', marginBottom: '32px', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
         <div style={{ marginBottom: '40px' }}>
-          <h3 style={{ color: '#fff', fontSize: '32px', fontWeight: '900', marginBottom: '12px', letterSpacing: '-0.5px' }}>📊 SHAP Frequency Analysis</h3>
+          <h3 style={{ color: '#fff', fontSize: '32px', fontWeight: '900', marginBottom: '12px', letterSpacing: '-0.5px' }}>SHAP Frequency Analysis</h3>
           <p style={{ color: '#888', fontSize: '15px', lineHeight: '1.7', maxWidth: '800px' }}>
             Shows <span style={{ color: '#3b82f6', fontWeight: '700' }}>which frequency bands</span> the AI focused on to make its <span style={{ fontWeight: '700' }}>{isFake ? 'FAKE' : 'REAL'}</span> prediction. 
             {isFake 
@@ -252,34 +265,34 @@ export const SHAPCard = ({ data, accentColor, delay, isFake }) => {
               {[0, 25, 50, 75, 100].map(pct => (
                 <div key={pct} style={{
                   position: 'absolute', left: 0, right: 0, bottom: `${pct}%`,
-                  height: '1px', background: 'rgba(255,255,255,0.06)',
+                  height: '1px', background: 'rgba(255,255,255,0.03)',
                   display: 'flex', alignItems: 'center'
                 }}>
-                  <span style={{ position: 'absolute', left: '-28px', fontSize: '10px', color: '#555', fontWeight: '700' }}>{pct}</span>
+                  <span style={{ position: 'absolute', left: '-32px', fontSize: '10px', color: '#666', fontWeight: '700' }}>{pct}</span>
                 </div>
               ))}
 
               {/* Bars */}
-              <div style={{ display: 'flex', gap: '16px', justifyContent: 'space-around', alignItems: 'flex-end', height: '100%', position: 'relative' }}>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-around', alignItems: 'flex-end', height: '100%', position: 'relative' }}>
                 {bands.map((band, i) => {
                   const val = Math.random() * 100;
                   const isHigh = val > 70;
                   return (
-                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', maxWidth: '100px' }}>
+                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', maxWidth: '70px', minWidth: '45px' }}>
                       <div style={{ width: '100%', height: '340px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
                         <div style={{
-                          width: '85%', height: `${val}%`,
-                          background: `linear-gradient(180deg, ${band.color} 0%, ${band.color}aa 100%)`,
-                          borderRadius: '8px 8px 0 0', position: 'relative',
-                          boxShadow: isHigh ? `0 0 24px ${band.color}66, inset 0 -2px 12px ${band.color}44` : `0 4px 12px ${band.color}33`,
-                          border: `2px solid ${band.color}66`,
+                          width: '90%', height: `${val}%`,
+                          background: `linear-gradient(180deg, ${band.color} 0%, ${band.color}cc 50%, ${band.color}aa 100%)`,
+                          borderRadius: '6px 6px 0 0', position: 'relative',
+                          boxShadow: isHigh ? `0 0 20px ${band.color}88, inset 0 -2px 8px ${band.color}66` : `0 4px 12px ${band.color}40`,
+                          border: `2px solid ${band.color}80`,
                           transition: 'all 0.3s ease',
                           cursor: 'pointer'
                         }}>
                           <div style={{
-                            position: 'absolute', top: '-32px', left: '50%', transform: 'translateX(-50%)',
-                            color: band.color, fontSize: '16px', fontWeight: '900',
-                            textShadow: `0 0 12px ${band.color}88`, whiteSpace: 'nowrap'
+                            position: 'absolute', top: '-28px', left: '50%', transform: 'translateX(-50%)',
+                            color: band.color, fontSize: '13px', fontWeight: '900',
+                            textShadow: `0 0 10px ${band.color}aa`, whiteSpace: 'nowrap'
                           }}>{val.toFixed(0)}%</div>
                         </div>
                       </div>
@@ -290,12 +303,12 @@ export const SHAPCard = ({ data, accentColor, delay, isFake }) => {
             </div>
 
             {/* X-axis labels */}
-            <div style={{ display: 'flex', gap: '16px', justifyContent: 'space-around', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-around', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
               {bands.map((band, i) => (
-                <div key={i} style={{ flex: 1, textAlign: 'center', maxWidth: '100px' }}>
-                  <div style={{ color: band.color, fontSize: '12px', fontWeight: '800', marginBottom: '4px' }}>{band.label}</div>
-                  <div style={{ color: '#666', fontSize: '10px', fontWeight: '600' }}>{band.name}</div>
-                  <div style={{ color: '#555', fontSize: '9px', marginTop: '2px', fontStyle: 'italic' }}>{band.desc}</div>
+                <div key={i} style={{ flex: 1, textAlign: 'center', maxWidth: '70px', minWidth: '45px' }}>
+                  <div style={{ color: band.color, fontSize: '10px', fontWeight: '800', marginBottom: '3px' }}>{band.label}</div>
+                  <div style={{ color: '#666', fontSize: '8px', fontWeight: '600' }}>{band.name}</div>
+                  <div style={{ color: '#555', fontSize: '7px', marginTop: '1px', fontStyle: 'italic' }}>{band.desc}</div>
                 </div>
               ))}
             </div>
@@ -314,7 +327,7 @@ export const SHAPCard = ({ data, accentColor, delay, isFake }) => {
               }}>
                 <div>
                   <div style={{ color: '#fff', fontSize: '15px', fontWeight: '700', marginBottom: '4px' }}>
-                    {name.includes('hubert') ? '🎵 HuBERT' : '🔊 Wav2Vec2'}
+                    {name.includes('hubert') ? 'HuBERT' : 'Wav2Vec2'}
                   </div>
                   <div style={{ color: '#666', fontSize: '12px' }}>
                     {name.includes('hubert') ? 'Acoustic Expert' : 'Linguistic Expert'}
@@ -348,7 +361,7 @@ const LRPCardBackup = ({ data, accentColor, delay }) => {
   return (
     <div style={{ opacity: 0, animation: `fadeIn 0.6s ease-out ${delay}ms forwards` }}>
       <div style={{ background: '#0f0f0f', border: '1px solid #2a2a2a', borderRadius: '20px', padding: '40px', marginBottom: '24px' }}>
-        <h3 style={{ color: '#fff', fontSize: '24px', fontWeight: '800', marginBottom: '8px' }}>🔬 Layer-wise Relevance</h3>
+        <h3 style={{ color: '#fff', fontSize: '24px', fontWeight: '800', marginBottom: '8px' }}>Layer-wise Relevance</h3>
         <p style={{ color: '#888', fontSize: '14px', marginBottom: '32px' }}>
           Feature relevance heatmap. Brighter = more relevant to prediction.
         </p>
@@ -404,7 +417,7 @@ export const ImprovedWaveformCard = ({ data, accentColor, delay, isFake }) => {
     <div style={{ opacity: 0, animation: `fadeIn 0.6s ease-out ${delay}ms forwards` }}>
       <div style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #141414 100%)', border: '2px solid #2a2a2a', borderRadius: '24px', padding: '48px', marginBottom: '32px', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
         <div style={{ marginBottom: '40px' }}>
-          <h3 style={{ color: '#fff', fontSize: '32px', fontWeight: '900', marginBottom: '12px', letterSpacing: '-0.5px' }}>🌊 Audio Waveform</h3>
+          <h3 style={{ color: '#fff', fontSize: '32px', fontWeight: '900', marginBottom: '12px', letterSpacing: '-0.5px' }}>Audio Waveform</h3>
           <p style={{ color: '#888', fontSize: '15px', lineHeight: '1.7', maxWidth: '800px' }}>
             Temporal confidence over time. 
             <span style={{ color: accentColor, fontWeight: '700' }}> Highlighted regions</span> show {highlightMeaning}.
@@ -541,30 +554,30 @@ export const ImprovedTemporalCard = ({ data, accentColor, delay, isFake }) => {
     if (visualVariation < 3 && variation < 5) {
       status = 'bad';
       statusColor = '#ef4444';
-      statusText = '✗ TOO UNIFORM';
+      statusText = 'TOO UNIFORM';
     } else if (visualVariation > 8 || variation > 12) {
       status = 'good';
       statusColor = '#22c55e';
-      statusText = '✓ NATURAL VARIATION';
+      statusText = 'NATURAL VARIATION';
     } else {
       status = 'medium';
       statusColor = '#fbbf24';
-      statusText = '◐ MODERATE';
+      statusText = 'MODERATE';
     }
   } else {
     // For real audio: all variation patterns are normal
     if (visualVariation < 3 && variation < 5) {
       status = 'neutral';
       statusColor = '#22c55e';
-      statusText = '✓ CONSISTENT';
+      statusText = 'CONSISTENT';
     } else if (visualVariation > 10 || variation > 15) {
       status = 'neutral';
       statusColor = '#22c55e';
-      statusText = '✓ HIGHLY VARIED';
+      statusText = 'HIGHLY VARIED';
     } else {
       status = 'neutral';
       statusColor = '#22c55e';
-      statusText = '✓ NORMAL VARIATION';
+      statusText = 'NORMAL VARIATION';
     }
   }
 
@@ -572,15 +585,15 @@ export const ImprovedTemporalCard = ({ data, accentColor, delay, isFake }) => {
     <div style={{ opacity: 0, animation: `fadeIn 0.6s ease-out ${delay}ms forwards` }}>
       <div style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #141414 100%)', border: '2px solid #2a2a2a', borderRadius: '24px', padding: '48px', marginBottom: '32px', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
         <div style={{ marginBottom: '40px' }}>
-          <h3 style={{ color: '#fff', fontSize: '32px', fontWeight: '900', marginBottom: '12px', letterSpacing: '-0.5px' }}>📈 Temporal Consistency Analysis</h3>
+          <h3 style={{ color: '#fff', fontSize: '32px', fontWeight: '900', marginBottom: '12px', letterSpacing: '-0.5px' }}>Temporal Consistency Analysis</h3>
           <p style={{ color: '#888', fontSize: '15px', lineHeight: '1.7', maxWidth: '800px' }}>
             {isFake 
               ? (status === 'bad'
-                ? '⚠️ Suspiciously uniform scores - too consistent across time, typical of synthetic/TTS audio'
+                ? 'Suspiciously uniform scores - too consistent across time, typical of synthetic/TTS audio'
                 : status === 'good'
-                ? '✓ Natural variation detected despite FAKE prediction - scores fluctuate naturally'
-                : '◐ Moderate variation - some natural patterns present')
-              : `✓ ${statusText} variation pattern - consistent with authentic human speech`}
+                ? 'Natural variation detected despite FAKE prediction - scores fluctuate naturally'
+                : 'Moderate variation - some natural patterns present')
+              : `${statusText} variation pattern - consistent with authentic human speech`}
           </p>
         </div>
 
@@ -688,32 +701,6 @@ export const ImprovedTemporalCard = ({ data, accentColor, delay, isFake }) => {
           </div>
         </div>
 
-        {/* Interpretation */}
-        <div style={{ marginTop: '32px', padding: '24px', background: `${statusColor}10`, borderRadius: '12px', border: `1px solid ${statusColor}30` }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-            <div style={{ fontSize: '24px' }}>
-              {isFake 
-                ? (status === 'bad' ? '⚠️' : status === 'good' ? '✓' : '◐')
-                : '✓'}
-            </div>
-            <div style={{ color: statusColor, fontSize: '15px', fontWeight: '800', letterSpacing: '0.5px' }}>
-              {isFake
-                ? (status === 'bad' ? 'SUSPICIOUS UNIFORMITY DETECTED' : 
-                   status === 'good' ? 'NATURAL VARIATION PATTERN' : 
-                   'MODERATE CONSISTENCY')
-                : 'NORMAL VARIATION PATTERN'}
-            </div>
-          </div>
-          <p style={{ color: '#888', fontSize: '13px', lineHeight: '1.6' }}>
-            {isFake
-              ? (status === 'bad'
-                ? 'The scores are suspiciously uniform across time. Real human speech typically shows more variation as speakers naturally change tone and emphasis. This pattern is common in TTS-generated audio.'
-                : status === 'good'
-                ? 'The scores show healthy variation across time segments, which is expected in genuine human speech where tone, emphasis, and emotion naturally fluctuate.'
-                : 'The variation level is moderate. While some natural patterns are present, the consistency is neither strongly indicative of real nor fake audio.')
-              : 'The temporal consistency pattern is normal for authentic human speech. Real speakers naturally vary in tone, pace, and emphasis throughout their speech.'}
-          </p>
-        </div>
       </div>
       <style>{`@keyframes fadeIn { to { opacity: 1; } }`}</style>
     </div>
